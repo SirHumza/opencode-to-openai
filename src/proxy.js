@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { buildPromptParts, parseModel } from './util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -260,6 +261,42 @@ function createApp(config) {
     
     const client = createOpencodeClient({ baseUrl: OPENCODE_SERVER_URL, headers: clientHeaders });
 
+    // Bounded concurrency: protect the backend from overload (Discord + OpenClaw + Cursor at once).
+    // Unlike the old global mutex, N requests run in parallel; extras wait their turn.
+    const MAX_CONCURRENCY = Math.max(1, Number(process.env.OPENCODE_PROXY_MAX_CONCURRENCY || 8));
+    let activeRequests = 0;
+    const concurrencyWaiters = [];
+    const acquireSlot = () => {
+        if (activeRequests < MAX_CONCURRENCY) {
+            activeRequests += 1;
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => concurrencyWaiters.push(resolve));
+    };
+    const releaseSlot = () => {
+        const next = concurrencyWaiters.shift();
+        if (next) {
+            next();
+        } else {
+            activeRequests = Math.max(0, activeRequests - 1);
+        }
+    };
+
+    // One retry for connection-level failures (backend restarting, socket reset).
+    // Never retries timeouts or model errors. Each attempt uses a fresh session.
+    const TRANSIENT_RE = /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND/i;
+    const isTransient = (e) => TRANSIENT_RE.test(e?.message || '') || TRANSIENT_RE.test(e?.cause?.message || '');
+
+    // Request logging (single line per request)
+    const bootAt = Date.now();
+    app.use((req, res, next) => {
+        const start = Date.now();
+        res.on('finish', () => {
+            console.log(`[Proxy] ${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
+        });
+        next();
+    });
+
     // Auth middleware
     app.use((req, res, next) => {
         if (req.method === 'OPTIONS' || req.path === '/health' || req.path === '/') return next();
@@ -388,10 +425,20 @@ function createApp(config) {
     };
 
     async function promptWithTimeout(promptParams, timeoutMs) {
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(`Request timeout after ${timeoutMs}ms`)), timeoutMs);
-        });
-        return Promise.race([client.session.prompt(promptParams), timeoutPromise]);
+        const attempt = () => {
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error(`Request timeout after ${timeoutMs}ms`)), timeoutMs);
+            });
+            return Promise.race([client.session.prompt(promptParams), timeoutPromise]);
+        };
+        try {
+            return await attempt();
+        } catch (e) {
+            if (!isTransient(e)) throw e;
+            logDebug('Prompt transient failure, retrying once', { error: e.message });
+            await sleep(1000);
+            return attempt();
+        }
     }
 
     class NoEventDataError extends Error {
@@ -574,58 +621,18 @@ function createApp(config) {
         let sessionId = null;
         let eventStream = null;
         let cleanedUp = false;
+        let slotHeld = false;
         const markCleaned = () => { cleanedUp = true; };
         try {
+                await acquireSlot();
+                slotHeld = true;
                 try {
                     const { messages, model, stream } = req.body;
                     if (!messages || !Array.isArray(messages) || messages.length === 0) {
                         return res.status(400).json({ error: { message: 'messages array is required' } });
                     }
 
-                    let [pID, mID] = (model || 'opencode/kimi-k2.5-free').split('/');
-                    if (!mID) { mID = pID; pID = 'opencode'; }
-
-                    const normalizeMessageContent = (content) => {
-                        if (typeof content === 'string') return content;
-                        if (Array.isArray(content)) {
-                            return content.map((part) => {
-                                if (typeof part === 'string') return part;
-                                if (part && typeof part.text === 'string') return part.text;
-                                return '';
-                            }).join('');
-                        }
-                        if (content && typeof content.text === 'string') return content.text;
-                        if (content === null || content === undefined) return '';
-                        if (typeof content === 'number' || typeof content === 'boolean') return String(content);
-                        return '';
-                    };
-
-                    const buildPromptParts = (rawMessages) => {
-                        const parts = [];
-                        const systemChunks = [];
-                        const userContents = [];
-                        rawMessages.forEach((m) => {
-                            const role = (m?.role || 'user').toLowerCase();
-                            const content = normalizeMessageContent(m?.content);
-                            if (role === 'system') {
-                                if (content) systemChunks.push(content);
-                                return;
-                            }
-                            if (!content) return;
-                            if (role === 'user') userContents.push(content);
-                            const roleLabel = role.toUpperCase();
-                            const nameSuffix = m?.name ? `(${m.name})` : '';
-                            parts.push({
-                                type: 'text',
-                                text: `${roleLabel}${nameSuffix}: ${content}`
-                            });
-                        });
-                        return {
-                            parts,
-                            system: systemChunks.join('\n\n'),
-                            lastUserMsg: userContents[userContents.length - 1] || ''
-                        };
-                    };
+                    const { providerID: pID, modelID: mID } = parseModel(model);
 
                     const { parts, system: systemMsg, lastUserMsg } = buildPromptParts(messages);
                     const systemWithGuard = applyToolGuard(systemMsg);
@@ -645,10 +652,22 @@ function createApp(config) {
                     // Ensure backend is running
                     await ensureBackend(config);
 
-                    // Create session
-                    const sessionRes = await client.session.create();
-                    sessionId = sessionRes.data?.id;
-                    if (!sessionId) throw new Error('Failed to create OpenCode session');
+                    // Create session (one retry on transient connection failure)
+                    const createSession = async () => {
+                        const sessionRes = await client.session.create();
+                        const id = sessionRes.data?.id;
+                        if (!id) throw new Error('Failed to create OpenCode session');
+                        return id;
+                    };
+                    try {
+                        sessionId = await createSession();
+                    } catch (e) {
+                        if (!isTransient(e)) throw e;
+                        logDebug('Session create transient failure, retrying once', { error: e.message });
+                        await sleep(1000);
+                        await ensureBackend(config);
+                        sessionId = await createSession();
+                    }
                     logDebug('Session created', { sessionId });
 
                     const promptParams = {
@@ -832,6 +851,10 @@ function createApp(config) {
                         markCleaned();
                         await cleanupSession(sessionId);
                     }
+                    if (slotHeld) {
+                        slotHeld = false;
+                        releaseSlot();
+                    }
                 }
         } catch (error) {
             console.error('[Proxy] Request Handler Error:', error.message);
@@ -842,14 +865,29 @@ function createApp(config) {
                 markCleaned();
                 await cleanupSession(sessionId);
             }
+            if (slotHeld) {
+                slotHeld = false;
+                releaseSlot();
+            }
         }
     });
 
-    // Health check
-    app.get('/health', (req, res) => res.json({
-        status: 'ok',
-        backend: OPENCODE_SERVER_URL
-    }));
+    // Health check (reports real backend reachability)
+    app.get('/health', async (req, res) => {
+        let backendUp = false;
+        try {
+            await checkHealth(OPENCODE_SERVER_URL, config.BACKEND_AUTH);
+            backendUp = true;
+        } catch (e) { /* down */ }
+        res.json({
+            status: backendUp ? 'ok' : 'degraded',
+            backend: OPENCODE_SERVER_URL,
+            backendUp,
+            uptimeSec: Math.floor((Date.now() - bootAt) / 1000),
+            activeRequests,
+            maxConcurrency: MAX_CONCURRENCY,
+        });
+    });
 
     return { app, client };
 }
