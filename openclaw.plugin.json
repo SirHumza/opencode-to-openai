@@ -2,7 +2,7 @@
   "id": "opencode-to-api",
   "name": "OpenCode API Gateway",
   "description": "Lightweight OpenAI-compatible API gateway for OpenCode CLI. Use free AI models in OpenClaw, Cursor, Claude Code, and more.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "providers": ["opencode-to-api"],
   "configSchema": {
     "type": "object",
