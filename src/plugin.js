@@ -92,7 +92,7 @@ const plugin = {
             if (proxyInstance) return false;
             const healthUrl = `http://127.0.0.1:${cfg.port}/health`;
             try {
-                await axios.get(healthUrl, { timeout: 1000 });
+                await axios.get(healthUrl, { timeout: 3000 });
                 return false;
             } catch (e) {
                 // Proxy not running, start locally.
@@ -112,15 +112,15 @@ const plugin = {
                         DEBUG: cfg.debug
                     });
 
-                    for (let i = 0; i < 20; i += 1) {
+                    for (let i = 0; i < 30; i += 1) {
                         try {
-                            await axios.get(healthUrl, { timeout: 2000 });
+                            await axios.get(healthUrl, { timeout: 3000 });
                             return;
                         } catch (e) {
-                            await delay(500);
+                            await delay(1000);
                         }
                     }
-                    throw new Error('Proxy startup timeout.');
+                    throw new Error('Proxy startup timeout (30s). Check OPENCODE_PATH and port.');
                 })();
             }
             try {
@@ -135,27 +135,30 @@ const plugin = {
 
         const fetchModels = async () => {
             const now = Date.now();
-            if (cachedModels && now - cachedAt < 30000) return cachedModels;
+            if (cachedModels && now - cachedAt < 60000) return cachedModels;
 
-            const startedHere = await ensureProxy();
+            // Keep proxy long-lived via service ownership. Never kill it here;
+            // killing after login was the main OpenClaw flake (gateway lost backend).
+            await ensureProxy();
 
-            try {
-                const headers = {};
-                if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-                const res = await axios.get(`${baseUrl}/models`, { headers, timeout: 8000 });
-                const data = res.data?.data || [];
-                const models = normalizeModels(data);
-                cachedModels = models;
-                cachedAt = now;
-                return models;
-            } finally {
-                if (startedHere && proxyInstance) {
-                    proxyInstance.server.close();
-                    proxyInstance.killBackend();
-                    proxyInstance = null;
-                    proxyStarting = null;
+            const headers = {};
+            if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+            let lastErr = null;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                try {
+                    const res = await axios.get(`${baseUrl}/models`, { headers, timeout: 15000 });
+                    const data = res.data?.data || [];
+                    const models = normalizeModels(data);
+                    if (!models.length) throw new Error('Proxy returned zero models (backend down?)');
+                    cachedModels = models;
+                    cachedAt = Date.now();
+                    return models;
+                } catch (e) {
+                    lastErr = e;
+                    await delay(1000 * (attempt + 1));
                 }
             }
+            throw lastErr || new Error('Failed to fetch models from proxy');
         };
 
         api.registerService({

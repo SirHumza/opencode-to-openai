@@ -1011,14 +1011,10 @@ async function ensureBackend(config) {
             shell: useShell
         };
 
-        // Kill stale process if any
+        // Kill stale process if any (old jail already cleaned at startup of this attempt)
         if (state.process) {
             try { state.process.kill(); } catch (e) { /* ignore */ }
             state.process = null;
-        }
-        // Cleanup old temp dir
-        if (state.jailRoot && fs.existsSync(state.jailRoot)) {
-            try { fs.rmSync(state.jailRoot, { recursive: true, force: true }); } catch (e) { /* ignore */ }
         }
 
         state.process = spawn(opencodeBin, ['serve', '--port', port, '--hostname', '127.0.0.1'], spawnOptions);
