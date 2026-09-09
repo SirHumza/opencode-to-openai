@@ -1,11 +1,13 @@
 {
-  "name": "opencode-to-api",
+  "name": "opencode-to-openai",
   "version": "1.2.0",
-  "description": "Lightweight OpenAI-compatible API gateway for OpenCode CLI. Use free AI models in Cursor, Claude Code, OpenClaw, and more.",
+  "description": "Lightweight API gateway that transforms OpenCode CLI into a standard OpenAI-compatible REST API.",
   "main": "index.js",
   "type": "module",
   "openclaw": {
-    "extensions": ["./src/plugin.js"]
+    "extensions": [
+      "./src/plugin.js"
+    ]
   },
   "scripts": {
     "start": "node index.js",
