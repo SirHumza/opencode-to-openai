@@ -1,0 +1,10 @@
+{
+    "PORT": 8083,
+    "API_KEY": "",
+    "BIND_HOST": "127.0.0.1",
+    "DISABLE_TOOLS": false,
+    "OPENCODE_SERVER_URL": "http://127.0.0.1:14097",
+    "OPENCODE_PATH": "opencode",
+    "OPENCODE_SERVER_USERNAME": "",
+    "OPENCODE_SERVER_PASSWORD": ""
+}

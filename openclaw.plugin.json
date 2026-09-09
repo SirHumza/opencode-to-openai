@@ -1,0 +1,39 @@
+{
+  "id": "opencode-to-api",
+  "name": "OpenCode API Gateway",
+  "description": "Lightweight OpenAI-compatible API gateway for OpenCode CLI. Use free AI models in OpenClaw, Cursor, Claude Code, and more.",
+  "version": "1.0.0",
+  "providers": ["opencode-to-api"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "port": { "type": "integer", "default": 8083 },
+      "apiKey": { "type": "string", "default": "" },
+      "backendUrl": { "type": "string", "default": "http://127.0.0.1:14097" },
+      "opencodePath": { "type": "string", "default": "opencode" },
+      "bindHost": { "type": "string", "default": "127.0.0.1" },
+      "useIsolatedHome": { "type": "boolean", "default": false },
+      "disableTools": { "type": "boolean", "default": false },
+      "debug": { "type": "boolean", "default": false },
+      "writeAllowlist": { "type": "boolean", "default": true },
+      "setDefaultOnLogin": { "type": "boolean", "default": false },
+      "defaultModel": { "type": "string", "default": "" }
+    }
+  },
+  "uiHints": {
+    "enabled": { "label": "Enable Plugin" },
+    "port": { "label": "Proxy Port" },
+    "apiKey": { "label": "Proxy API Key (optional)", "sensitive": true, "placeholder": "leave empty for no auth" },
+    "backendUrl": { "label": "OpenCode Backend URL" },
+    "opencodePath": { "label": "OpenCode CLI Path" },
+    "bindHost": { "label": "Bind Host" },
+    "useIsolatedHome": { "label": "Use Isolated HOME" },
+    "disableTools": { "label": "Disable Tool Calls (Safe)" },
+    "debug": { "label": "Enable Debug Logs" },
+    "writeAllowlist": { "label": "Merge Allowlist" },
+    "setDefaultOnLogin": { "label": "Set Default on Login" },
+    "defaultModel": { "label": "Default Model (optional)" }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "opencode-to-openai",
+  "version": "1.1.0",
+  "description": "Lightweight API gateway that transforms OpenCode CLI into a standard OpenAI-compatible REST API.",
+  "main": "index.js",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./src/plugin.js"]
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "opencode",
+    "openai",
+    "api",
+    "gateway",
+    "proxy",
+    "ai",
+    "llm",
+    "free-models",
+    "cursor",
+    "claude-code",
+    "openclaw"
+  ],
+  "author": "SirHumza",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.51",
+    "axios": "^1.13.4",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}
